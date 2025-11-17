@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ONNX Heatmap Predictor</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 1.5rem;
+      background: #111;
+      color: #eee;
+    }
+
+    h1 {
+      margin-bottom: 0.5rem;
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      margin-top: 1rem;
+    }
+
+    .column {
+      flex: 1 1 280px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    video, canvas {
+      border-radius: 8px;
+      border: 1px solid #444;
+      max-width: 100%;
+      background: #000;
+    }
+
+    button {
+      padding: 0.6rem 1.2rem;
+      border-radius: 999px;
+      border: none;
+      font-size: 0.95rem;
+      cursor: pointer;
+      background: #3b82f6;
+      color: #fff;
+      font-weight: 600;
+      align-self: flex-start;
+    }
+
+    button:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
+
+    #status {
+      font-size: 0.9rem;
+      opacity: 0.85;
+      margin-top: 0.5rem;
+    }
+
+    .label {
+      font-size: 0.9rem;
+      opacity: 0.8;
+    }
+
+    #modelDropZone {
+      border: 2px dashed #555;
+      border-radius: 12px;
+      padding: 1rem;
+      text-align: center;
+      cursor: pointer;
+      margin-top: 0.75rem;
+      background: #181818;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+
+    #modelDropZone.dragover {
+      border-color: #3b82f6;
+      background: #1f2937;
+    }
+
+    #modelDropZone strong {
+      color: #93c5fd;
+    }
+
+    #modelFileInput {
+      display: none;
+    }
+
+    #modelInfo {
+      font-size: 0.85rem;
+      opacity: 0.8;
+      margin-top: 0.25rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="modelDropZone">
+    <div><strong>Drop your .onnx model here</strong></div>
+    <div>or click to choose a file from disk</div>
+    <input type="file" id="modelFileInput" accept=".onnx" />
+    <div id="modelInfo">No model loaded yet.</div>
+  </div>
+
+  <p id="status">Initializing camera...</p>
+
+  <div class="row">
+    <div class="column">
+      <span class="label">Live camera</span>
+      <video id="video" autoplay playsinline></video>
+      <button id="captureBtn" disabled>Capture &amp; Segment</button>
+    </div>
+
+    <div class="column">
+      <span class="label">Captured image (model input)</span>
+      <canvas id="captureCanvas" width="256" height="256"></canvas>
+    </div>
+
+    <div class="column">
+      <span class="label">Probability heatmap (after sigmoid)</span>
+      <canvas id="heatmapCanvas" width="256" height="256"></canvas>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
