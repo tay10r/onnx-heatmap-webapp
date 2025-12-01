@@ -1,130 +1,129 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>ONNX Heatmap Predictor</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      padding: 1.5rem;
-      background: #111;
-      color: #eee;
-    }
+  <meta charset="UTF-8" />
+  <title>Artifact Sifter</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <meta name="theme-color" content="#111827" />
 
-    h1 {
-      margin-bottom: 0.5rem;
-    }
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
 
-    .row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 1.5rem;
-      margin-top: 1rem;
-    }
-
-    .column {
-      flex: 1 1 280px;
-      display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
-    }
-
-    video, canvas {
-      border-radius: 8px;
-      border: 1px solid #444;
-      max-width: 100%;
-      background: #000;
-    }
-
-    button {
-      padding: 0.6rem 1.2rem;
-      border-radius: 999px;
-      border: none;
-      font-size: 0.95rem;
-      cursor: pointer;
-      background: #3b82f6;
-      color: #fff;
-      font-weight: 600;
-      align-self: flex-start;
-    }
-
-    button:disabled {
-      background: #555;
-      cursor: not-allowed;
-    }
-
-    #status {
-      font-size: 0.9rem;
-      opacity: 0.85;
-      margin-top: 0.5rem;
-    }
-
-    .label {
-      font-size: 0.9rem;
-      opacity: 0.8;
-    }
-
-    #modelDropZone {
-      border: 2px dashed #555;
-      border-radius: 12px;
-      padding: 1rem;
-      text-align: center;
-      cursor: pointer;
-      margin-top: 0.75rem;
-      background: #181818;
-      transition: border-color 0.15s ease, background 0.15s ease;
-    }
-
-    #modelDropZone.dragover {
-      border-color: #3b82f6;
-      background: #1f2937;
-    }
-
-    #modelDropZone strong {
-      color: #93c5fd;
-    }
-
-    #modelFileInput {
-      display: none;
-    }
-
-    #modelInfo {
-      font-size: 0.85rem;
-      opacity: 0.8;
-      margin-top: 0.25rem;
-    }
-  </style>
+  <!-- ONNX Runtime Web -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
 </head>
 <body>
-  <div id="modelDropZone">
-    <div><strong>Drop your .onnx model here</strong></div>
-    <div>or click to choose a file from disk</div>
-    <input type="file" id="modelFileInput" accept=".onnx" />
-    <div id="modelInfo">No model loaded yet.</div>
+  <div id="app">
+
+    <!-- Phase 1: Model mgmt + captures -->
+    <div id="phase-browse" class="phase active">
+      <header class="app-header">
+        <div>
+          <h1>Artifact Sifter</h1>
+          <p class="subtitle">Offline artifact detection</p>
+        </div>
+        <button id="btn-new-capture" class="btn primary">Capture New Sample</button>
+      </header>
+
+      <main class="main-layout">
+        <!-- Models -->
+        <section class="card">
+          <h2>Models</h2>
+          <div class="model-active">
+            <span class="label">Active model:</span>
+            <span id="active-model-name" class="value">None selected</span>
+          </div>
+
+          <ul id="model-list" class="list"></ul>
+
+          <form id="model-add-form" class="model-form">
+            <h3>Add model by URL</h3>
+            <label>
+              Name
+              <input type="text" id="model-name-input" required />
+            </label>
+            <label>
+              ONNX URL
+              <input type="url" id="model-url-input" required />
+            </label>
+            <button type="submit" class="btn secondary fullwidth">Download & Save</button>
+          </form>
+        </section>
+
+        <!-- Captures -->
+        <section class="card">
+          <h2>Captures</h2>
+          <ul id="capture-list" class="list"></ul>
+          <p id="capture-empty" class="empty-hint">No captures yet.</p>
+        </section>
+      </main>
+    </div>
+
+    <!-- Phase 2: Camera capture -->
+    <div id="phase-capture" class="phase">
+      <header class="app-header center">
+        <h1>Align and Capture</h1>
+      </header>
+      <main class="capture-layout">
+        <div class="camera-wrapper">
+          <video id="camera-video" playsinline autoplay muted></video>
+          <canvas id="camera-overlay" class="camera-overlay"></canvas>
+          <div id="orientation-indicator" class="orientation-indicator">
+            Hold device flat, pointing down
+          </div>
+        </div>
+        <div class="capture-controls">
+          <button id="btn-cancel-capture" class="btn ghost">Cancel</button>
+          <button id="btn-do-capture" class="btn primary" disabled>Capture</button>
+        </div>
+      </main>
+    </div>
+
+    <!-- Phase 3: Processing -->
+    <div id="phase-processing" class="phase">
+      <div class="processing-center">
+        <div class="spinner"></div>
+        <p>Analyzing sample&hellip;</p>
+      </div>
+    </div>
+
+    <!-- Viewer for a capture -->
+    <div id="viewer-modal" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <header class="modal-header">
+          <h2 id="viewer-title">Capture</h2>
+          <button id="viewer-close" class="icon-button" aria-label="Close">&times;</button>
+        </header>
+        <main class="modal-body">
+          <div class="slider-container">
+            <div class="slider-images">
+              <img id="viewer-image" />
+              <div id="viewer-heatmap-wrapper">
+                <img id="viewer-heatmap" />
+              </div>
+            </div>
+            <input id="viewer-slider" type="range" min="0" max="100" value="50" />
+          </div>
+          <div class="meta">
+            <div><strong>Timestamp:</strong> <span id="viewer-ts"></span></div>
+            <div><strong>Model:</strong> <span id="viewer-model"></span></div>
+            <div><strong>GPS:</strong> <span id="viewer-gps"></span></div>
+          </div>
+        </main>
+      </div>
+    </div>
+
   </div>
 
-  <p id="status">Initializing camera...</p>
-
-  <div class="row">
-    <div class="column">
-      <span class="label">Live camera</span>
-      <video id="video" autoplay playsinline></video>
-      <button id="captureBtn" disabled>Capture &amp; Segment</button>
-    </div>
-
-    <div class="column">
-      <span class="label">Captured image (model input)</span>
-      <canvas id="captureCanvas" width="256" height="256"></canvas>
-    </div>
-
-    <div class="column">
-      <span class="label">Probability heatmap (after sigmoid)</span>
-      <canvas id="heatmapCanvas" width="256" height="256"></canvas>
-    </div>
-  </div>
-
-  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
-  <script src="script.js"></script>
+  <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(console.error);
+      });
+    }
+  </script>
 </body>
 </html>
+
