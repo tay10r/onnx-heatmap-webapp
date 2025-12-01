@@ -242,22 +242,28 @@ class CameraController {
     this.video = document.getElementById('camera-video');
     this.overlay = document.getElementById('camera-overlay');
     this.orientationIndicator = document.getElementById('orientation-indicator');
-    this.allowedToCapture = false;
     this.orientationHandler = this._onOrientation.bind(this);
+
     this.hasIMU = false;
+
+    // Cached overlay geometry for the level
+    this.frame = null; // { x, y, size, cx, cy, bubbleRadius }
   }
 
   async start() {
     if (this.stream) return;
+
     const constraints = {
       video: {
-        facingMode: 'environment'
+        facingMode: { ideal: 'environment' }
       },
       audio: false
     };
+
     this.stream = await navigator.mediaDevices.getUserMedia(constraints);
     this.video.srcObject = this.stream;
     await this.video.play();
+
     this._setupOverlay();
     this._setupOrientation();
   }
@@ -274,33 +280,106 @@ class CameraController {
   _setupOverlay() {
     const canvas = this.overlay;
     const ctx = canvas.getContext('2d');
+
     const resize = () => {
-      canvas.width = this.video.clientWidth || this.video.videoWidth || 640;
-      canvas.height = this.video.clientHeight || this.video.videoHeight || 480;
-      this._drawOverlay();
+      const w = this.video.clientWidth || this.video.videoWidth || 640;
+      const h = this.video.clientHeight || this.video.videoHeight || 480;
+      canvas.width = w;
+      canvas.height = h;
+
+      // Compute frame for the “level”
+      const size = Math.min(w, h) * 0.6;
+      const x = (w - size) / 2;
+      const y = (h - size) / 2;
+      const cx = w / 2;
+      const cy = h / 2;
+      const bubbleRadius = size * 0.06;
+
+      this.frame = { x, y, size, cx, cy, bubbleRadius };
+
+      this._drawOverlayBase();
     };
-    resize();
+
+    // Draw once when video metadata is ready
+    if (this.video.readyState >= 1) {
+      resize();
+    } else {
+      this.video.addEventListener('loadedmetadata', resize, { once: true });
+    }
+
     window.addEventListener('resize', resize);
   }
 
-  _drawOverlay() {
+  _drawOverlayBase() {
     const canvas = this.overlay;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const size = Math.min(canvas.width, canvas.height) * 0.7;
-    const x = (canvas.width - size) / 2;
-    const y = (canvas.height - size) / 2;
-    ctx.strokeStyle = 'rgba(248, 250, 252, 0.8)';
+
+    if (!this.frame) return;
+    const { x, y, size, cx, cy } = this.frame;
+
+    // Square frame
+    ctx.strokeStyle = 'rgba(248, 250, 252, 0.9)';
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 6]);
     ctx.strokeRect(x, y, size, size);
     ctx.setLineDash([]);
+
+    // Crosshair inside the square
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.9)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx, y);
+    ctx.lineTo(cx, y + size);
+    ctx.moveTo(x, cy);
+    ctx.lineTo(x + size, cy);
+    ctx.stroke();
+  }
+
+  _drawOverlayWithBubble(pitchErrorDeg, rollDeg) {
+    const canvas = this.overlay;
+    const ctx = canvas.getContext('2d');
+    if (!this.frame) return;
+
+    // Redraw base (frame + crosshairs)
+    this._drawOverlayBase();
+
+    const { x, y, size, cx, cy, bubbleRadius } = this.frame;
+
+    // Map orientation errors (degrees) into [-1, 1]
+    // For a device held flat over the tray: pitchError ≈ 0, roll ≈ 0
+    const maxErr = 30; // degrees => beyond this, bubble sticks to edge
+    const normPitch = Math.max(-1, Math.min(1, pitchErrorDeg / maxErr));
+    const normRoll  = Math.max(-1, Math.min(1, rollDeg / maxErr));
+
+    // Convert to pixel offsets inside the frame
+    const maxOffset = (size / 2) - bubbleRadius - 2;
+    const offsetX = normRoll * maxOffset;
+    const offsetY = normPitch * maxOffset;
+
+    const bx = cx + offsetX;
+    const by = cy + offsetY;
+
+    // Bubble outer aura
+    ctx.beginPath();
+    ctx.arc(bx, by, bubbleRadius * 1.7, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(37, 99, 235, 0.18)';
+    ctx.fill();
+
+    // Bubble core
+    ctx.beginPath();
+    ctx.arc(bx, by, bubbleRadius, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(59, 130, 246, 0.9)';
+    ctx.strokeStyle = 'rgba(191, 219, 254, 0.95)';
+    ctx.lineWidth = 1.5;
+    ctx.fill();
+    ctx.stroke();
   }
 
   _setupOrientation() {
     if (typeof DeviceOrientationEvent === 'undefined') {
-      this.allowedToCapture = true;
-      this.orientationIndicator.textContent = 'Sensor unavailable. Align visually and capture.';
+      this.orientationIndicator.textContent =
+        'Align tray visually, then tap Capture.';
       this.orientationIndicator.classList.add('good');
       return;
     }
@@ -309,12 +388,20 @@ class CameraController {
       if (typeof DeviceOrientationEvent.requestPermission === 'function') {
         try {
           const perm = await DeviceOrientationEvent.requestPermission();
-          if (perm !== 'granted') return;
+          if (perm !== 'granted') {
+            this.orientationIndicator.textContent =
+              'Orientation access denied. Align visually and tap Capture.';
+            return;
+          }
         } catch {
+          this.orientationIndicator.textContent =
+            'Orientation access blocked. Align visually and tap Capture.';
           return;
         }
       }
+
       this.hasIMU = true;
+      this.orientationIndicator.textContent = 'Move the bubble to the center, then Capture.';
       window.addEventListener('deviceorientation', this.orientationHandler);
     };
 
@@ -322,35 +409,70 @@ class CameraController {
   }
 
   _onOrientation(e) {
-    const beta = e.beta;
-    if (beta == null) {
-      this.allowedToCapture = true;
-      this.orientationIndicator.textContent = 'Align visually and capture.';
+    // beta: front/back tilt, gamma: left/right tilt
+    const beta = e.beta;   // -180..180
+    const gamma = e.gamma; // -90..90
+
+    if (beta == null || gamma == null) {
+      this.orientationIndicator.textContent =
+        'Align tray visually, then tap Capture.';
       this.orientationIndicator.classList.add('good');
       return;
     }
-    const off = beta - 90;
-    const tilt = Math.abs(off);
-    const threshold = 8;
-    if (tilt <= threshold) {
-      this.allowedToCapture = true;
-      this.orientationIndicator.textContent = 'Aligned. Tap capture.';
+
+    // For camera facing down, we want beta ≈ 90 (flat) and gamma ≈ 0
+    const pitchError = beta - 90; // 0 when flat
+    const roll = gamma;           // 0 when not rolled to the side
+
+    // Update bubble level
+    this._drawOverlayWithBubble(pitchError, roll);
+
+    const tilt = Math.sqrt(pitchError * pitchError + roll * roll);
+    let message;
+    let good = false;
+
+    if (tilt <= 5) {
+      message = 'Aligned ✔ Move bubble to center, then Capture.';
+      good = true;
+    } else if (tilt <= 15) {
+      message = 'Almost there. Nudge the bubble toward the center.';
+      good = true;
+    } else {
+      // Give directional hints
+      const hints = [];
+
+      if (pitchError > 5) {
+        hints.push('tilt device back toward you');
+      } else if (pitchError < -5) {
+        hints.push('tilt device forward away from you');
+      }
+
+      if (roll > 5) {
+        hints.push('tilt device left');
+      } else if (roll < -5) {
+        hints.push('tilt device right');
+      }
+
+      if (hints.length) {
+        message = 'Move bubble toward center: ' + hints.join(', ') + '.';
+      } else {
+        message = 'Move bubble toward center before Capture.';
+      }
+    }
+
+    this.orientationIndicator.textContent = message;
+    if (good) {
       this.orientationIndicator.classList.add('good');
     } else {
-      this.allowedToCapture = false;
-      this.orientationIndicator.textContent = 'Tilt device until aligned.';
       this.orientationIndicator.classList.remove('good');
     }
-  }
-
-  canCapture() {
-    return this.allowedToCapture;
   }
 
   captureFrame() {
     const canvas = document.createElement('canvas');
     const video = this.video;
     const aspect = 4 / 3;
+
     let w = video.videoWidth;
     let h = video.videoHeight;
 
@@ -359,27 +481,27 @@ class CameraController {
       h = 720;
     }
 
+    const ctx = canvas.getContext('2d');
+
     if (w / h > aspect) {
       const targetW = h * aspect;
       const offsetX = (w - targetW) / 2;
       canvas.width = targetW;
       canvas.height = h;
-      const ctx = canvas.getContext('2d');
       ctx.drawImage(video, offsetX, 0, targetW, h, 0, 0, targetW, h);
     } else {
       const targetH = w / aspect;
       const offsetY = (h - targetH) / 2;
       canvas.width = w;
       canvas.height = targetH;
-      const ctx = canvas.getContext('2d');
       ctx.drawImage(video, 0, offsetY, w, targetH, 0, 0, w, targetH);
     }
 
-    const ctx = canvas.getContext('2d');
-    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    return { canvas, imageData: imgData };
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    return { canvas, imageData };
   }
 }
+
 
 class UIManager {
   constructor(storage, models, camera) {
@@ -430,10 +552,6 @@ class UIManager {
       }
     });
     this.viewerSlider.addEventListener('input', () => this.updateSliderMask());
-
-    setInterval(() => {
-      this.btnDoCapture.disabled = !this.camera.canCapture();
-    }, 200);
   }
 
   setPhase(phase) {
@@ -567,8 +685,10 @@ class UIManager {
       return;
     }
     this.setPhase(PHASE_CAPTURE);
+    this.btnDoCapture.disabled = true;
     try {
       await this.camera.start();
+      this.btnDoCapture.disabled = false;
     } catch (err) {
       alert('Failed to access camera: ' + err.message);
       this.backToBrowse();
