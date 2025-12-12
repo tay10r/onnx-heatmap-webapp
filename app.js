@@ -120,7 +120,7 @@ class ModelManager {
     this.storage = storage;
     this.activeModelId = null;
     this.session = null;
-    this.inputShape = [1, 3, 224, 224]; // adjust to your real model
+    this.inputShape = [1, 3, 512, 512]; // adjust to your real model
     this.outputName = null;
   }
 
@@ -139,7 +139,7 @@ class ModelManager {
     }
     const arrayBuffer = await modelObj.blob.arrayBuffer();
     this.session = await ort.InferenceSession.create(arrayBuffer, {
-      executionProviders: ['wasm']
+      executionProviders: ['webgl', 'wasm']
     });
     if (!this.outputName) {
       this.outputName = this.session.outputNames[0];
@@ -158,10 +158,17 @@ class ModelManager {
     if (!this.session) return null;
 
     const [n, c, h, w] = this.inputShape;
-    const offscreen = new OffscreenCanvas(w, h);
-    const ctx = offscreen.getContext('2d');
-    ctx.putImageData(imageData, 0, 0);
-    const resized = ctx.getImageData(0, 0, w, h);
+
+    // Create a canvas from the original imageData
+    const srcCanvas = new OffscreenCanvas(imageData.width, imageData.height);
+    const srcCtx = srcCanvas.getContext('2d');
+    srcCtx.putImageData(imageData, 0, 0);
+
+    // Resize to model input size while preserving spatial mapping
+    const resizeCanvas = new OffscreenCanvas(w, h);
+    const resizeCtx = resizeCanvas.getContext('2d');
+    resizeCtx.drawImage(srcCanvas, 0, 0, w, h);
+    const resized = resizeCtx.getImageData(0, 0, w, h);
     const data = resized.data;
 
     const floatData = new Float32Array(n * c * h * w);
@@ -183,10 +190,12 @@ class ModelManager {
 
     const results = await this.session.run(feeds);
     const output = results[this.outputName];
-    return this._heatmapFromOutput(output);
+
+    // Generate a heatmap aligned to the original capture resolution
+    return this._heatmapFromOutput(output, imageData.width, imageData.height);
   }
 
-  _heatmapFromOutput(output) {
+  _heatmapFromOutput(output, targetWidth, targetHeight) {
     const dims = output.dims;
     let h, w;
     if (dims.length === 4) {
@@ -203,8 +212,8 @@ class ModelManager {
     }
 
     const data = output.data;
-    const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext('2d');
+    const baseCanvas = new OffscreenCanvas(w, h);
+    const ctx = baseCanvas.getContext('2d');
     const imgData = ctx.createImageData(w, h);
     const arr = imgData.data;
 
@@ -228,11 +237,26 @@ class ModelManager {
       arr[k] = r;
       arr[k + 1] = g;
       arr[k + 2] = b;
-      arr[k + 3] = Math.round(180 + v * 75);
+      arr[k + 3] = 255;
     }
 
     ctx.putImageData(imgData, 0, 0);
-    return canvas.convertToBlob({ type: 'image/png' });
+
+    // If target size is provided and differs, scale heatmap to match capture size
+    if (
+      typeof targetWidth === 'number' &&
+      typeof targetHeight === 'number' &&
+      (targetWidth !== w || targetHeight !== h)
+    ) {
+      const scaledCanvas = new OffscreenCanvas(targetWidth, targetHeight);
+      const sctx = scaledCanvas.getContext('2d');
+      // Optional: keep pixels crisp
+      sctx.imageSmoothingEnabled = false;
+      sctx.drawImage(baseCanvas, 0, 0, targetWidth, targetHeight);
+      return scaledCanvas.convertToBlob({ type: 'image/png' });
+    }
+
+    return baseCanvas.convertToBlob({ type: 'image/png' });
   }
 }
 
@@ -750,6 +774,18 @@ class App {
 
   async start() {
     await this.storage.init();
+
+    // Load default Sherd Detector model from relative URL if no models exist yet
+    const existingModels = await this.models.loadModelsFromDB();
+    if (!existingModels.length) {
+      try {
+        const id = await this.models.addModelByUrl('Sherd Detector', '/sherd-detector.onnx');
+        await this.models.setActiveModel(id);
+      } catch (err) {
+        console.error('Failed to preload default Sherd Detector model:', err);
+      }
+    }
+
     await this.ui.refreshModels();
     await this.ui.refreshCaptures();
   }
