@@ -779,7 +779,7 @@ class App {
     const existingModels = await this.models.loadModelsFromDB();
     if (!existingModels.length) {
       try {
-        const id = await this.models.addModelByUrl('Sherd Detector', '/sherd-detector.onnx');
+        const id = await this.models.addModelByUrl('Sherd Detector', 'sherd-detector.onnx');
         await this.models.setActiveModel(id);
       } catch (err) {
         console.error('Failed to preload default Sherd Detector model:', err);
