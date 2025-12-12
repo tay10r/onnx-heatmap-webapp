@@ -115,6 +115,19 @@ class StorageManager {
   }
 }
 
+const MAGMA_LUT = [
+  [0, 0, 0], [1, 0, 1], [2, 1, 3], [4, 1, 6], [6, 2, 9], [8, 3, 12],
+  [11, 4, 16], [14, 5, 20], [17, 6, 25], [20, 7, 30], [24, 8, 35],
+  [28, 9, 41], [32, 10, 47], [36, 11, 54], [40, 12, 60],
+  [44, 13, 67], [48, 14, 74], [52, 15, 81], [56, 16, 88],
+  [60, 17, 95], [64, 18, 102], [68, 19, 109], [72, 20, 116],
+  [76, 21, 123], [80, 22, 130], [84, 23, 137], [88, 24, 144],
+  [92, 25, 151], [96, 26, 158], [100, 27, 165], [104, 28, 172],
+  [108, 29, 179], [112, 30, 186], [116, 31, 193], [120, 32, 200],
+  [124, 33, 207], [128, 34, 214], [132, 35, 221], [136, 36, 228],
+  [140, 37, 235], [144, 38, 242], [148, 39, 249], [252, 252, 252]
+];
+
 class ModelManager {
   constructor(storage) {
     this.storage = storage;
@@ -196,6 +209,7 @@ class ModelManager {
   }
 
   _heatmapFromOutput(output, targetWidth, targetHeight) {
+
     const dims = output.dims;
     let h, w;
     if (dims.length === 4) {
@@ -229,15 +243,15 @@ class ModelManager {
     for (let i = 0; i < data.length; i++) {
       const norm = (data[i] - min) / range;
       const v = Math.max(0, Math.min(1, norm));
-      const r = v * 255;
-      const g = 0;
-      const b = (1 - v) * 255;
+
+      const idx = Math.floor(v * (MAGMA_LUT.length - 1));
+      const [r, g, b] = MAGMA_LUT[idx];
 
       const k = i * 4;
-      arr[k] = r;
+      arr[k]     = r;
       arr[k + 1] = g;
       arr[k + 2] = b;
-      arr[k + 3] = 255;
+      arr[k + 3] = 255; // fully opaque
     }
 
     ctx.putImageData(imgData, 0, 0);
