@@ -4,7 +4,8 @@ const ASSETS = [
   './index.html',
   './styles.css',
   './app.js',
-  './manifest.webmanifest'
+  './manifest.webmanifest',
+  './sherd-detector.onnx'
 ];
 
 self.addEventListener('install', event => {
