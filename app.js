@@ -190,9 +190,13 @@ class ModelManager {
       const r = data[i] / 255;
       const g = data[i + 1] / 255;
       const b = data[i + 2] / 255;
-      floatData[idx] = r;
-      floatData[idx + h * w] = g;
-      floatData[idx + 2 * h * w] = b;
+      const mean = [0.485, 0.456, 0.406];
+      const std  = [0.229, 0.224, 0.225];
+
+      floatData[idx]             = (r - mean[0]) / std[0];
+      floatData[idx + h * w]     = (g - mean[1]) / std[1];
+      floatData[idx + 2 * h * w] = (b - mean[2]) / std[2];
+
       idx++;
     }
 
