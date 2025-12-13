@@ -172,24 +172,37 @@ class ModelManager {
 
     const [n, c, h, w] = this.inputShape;
 
-    // Create a canvas from the original imageData
+    // Canvas containing the original capture
     const srcCanvas = new OffscreenCanvas(imageData.width, imageData.height);
     const srcCtx = srcCanvas.getContext('2d');
     srcCtx.putImageData(imageData, 0, 0);
 
-    // Resize to model input size while preserving spatial mapping
+    // 1) Center-crop to square
+    const srcW = imageData.width;
+    const srcH = imageData.height;
+    const side = Math.min(srcW, srcH);
+    const offsetX = Math.floor((srcW - side) / 2);
+    const offsetY = Math.floor((srcH - side) / 2);
+
+    const cropCanvas = new OffscreenCanvas(side, side);
+    const cropCtx = cropCanvas.getContext('2d');
+    cropCtx.drawImage(srcCanvas, offsetX, offsetY, side, side, 0, 0, side, side);
+
+    // 2) Resize square crop to model input (512x512)
     const resizeCanvas = new OffscreenCanvas(w, h);
     const resizeCtx = resizeCanvas.getContext('2d');
-    resizeCtx.drawImage(srcCanvas, 0, 0, w, h);
+    resizeCtx.drawImage(cropCanvas, 0, 0, w, h);
     const resized = resizeCtx.getImageData(0, 0, w, h);
     const data = resized.data;
 
+    // HWC u8 -> CHW f32
     const floatData = new Float32Array(n * c * h * w);
     let idx = 0;
     for (let i = 0; i < data.length; i += 4) {
       const r = data[i] / 255;
       const g = data[i + 1] / 255;
       const b = data[i + 2] / 255;
+
       const mean = [0.485, 0.456, 0.406];
       const std  = [0.229, 0.224, 0.225];
 
@@ -202,18 +215,23 @@ class ModelManager {
 
     const inputName = this.session.inputNames[0];
     const tensor = new ort.Tensor('float32', floatData, this.inputShape);
-    const feeds = {};
-    feeds[inputName] = tensor;
+    const feeds = { [inputName]: tensor };
 
     const results = await this.session.run(feeds);
     const output = results[this.outputName];
 
-    // Generate a heatmap aligned to the original capture resolution
-    return this._heatmapFromOutput(output, imageData.width, imageData.height);
+    // Build a heatmap aligned to the ORIGINAL capture:
+    // draw the heatmap into the center-square region, with bars around it.
+    return this._heatmapFromOutput(output, {
+      targetWidth: srcW,
+      targetHeight: srcH,
+      cropSide: side,
+      cropOffsetX: offsetX,
+      cropOffsetY: offsetY
+    });
   }
 
-  _heatmapFromOutput(output, targetWidth, targetHeight) {
-
+  _heatmapFromOutput(output, align) {
     const dims = output.dims;
     let h, w;
     if (dims.length === 4) {
@@ -230,6 +248,8 @@ class ModelManager {
     }
 
     const data = output.data;
+
+    // Build base heatmap at output resolution
     const baseCanvas = new OffscreenCanvas(w, h);
     const ctx = baseCanvas.getContext('2d');
     const imgData = ctx.createImageData(w, h);
@@ -247,12 +267,12 @@ class ModelManager {
     for (let i = 0; i < data.length; i++) {
       const norm = (data[i] - min) / range;
       const v = Math.max(0, Math.min(1, norm));
-
-      const idx = Math.floor(v * (MAGMA_LUT.length - 1));
-      const [r, g, b] = MAGMA_LUT[idx];
+      const r = v * 255;
+      const g = 0;
+      const b = (1 - v) * 255;
 
       const k = i * 4;
-      arr[k]     = r;
+      arr[k] = r;
       arr[k + 1] = g;
       arr[k + 2] = b;
       arr[k + 3] = 255; // fully opaque
@@ -260,21 +280,29 @@ class ModelManager {
 
     ctx.putImageData(imgData, 0, 0);
 
-    // If target size is provided and differs, scale heatmap to match capture size
-    if (
-      typeof targetWidth === 'number' &&
-      typeof targetHeight === 'number' &&
-      (targetWidth !== w || targetHeight !== h)
-    ) {
-      const scaledCanvas = new OffscreenCanvas(targetWidth, targetHeight);
-      const sctx = scaledCanvas.getContext('2d');
-      // Optional: keep pixels crisp
-      sctx.imageSmoothingEnabled = false;
-      sctx.drawImage(baseCanvas, 0, 0, targetWidth, targetHeight);
-      return scaledCanvas.convertToBlob({ type: 'image/png' });
+    // If no alignment requested, just return base heatmap blob
+    if (!align) {
+      return baseCanvas.convertToBlob({ type: 'image/png' });
     }
 
-    return baseCanvas.convertToBlob({ type: 'image/png' });
+    const { targetWidth, targetHeight, cropSide, cropOffsetX, cropOffsetY } = align;
+
+    // Create a full-size heatmap matching the original capture.
+    // Fill bars with opaque black (or change to any neutral you want).
+    const outCanvas = new OffscreenCanvas(targetWidth, targetHeight);
+    const outCtx = outCanvas.getContext('2d');
+    outCtx.fillStyle = 'rgba(0,0,0,1)';
+    outCtx.fillRect(0, 0, targetWidth, targetHeight);
+
+    // Paste the heatmap into the same center-crop square region
+    outCtx.imageSmoothingEnabled = false;
+    outCtx.drawImage(
+      baseCanvas,
+      0, 0, w, h,
+      cropOffsetX, cropOffsetY, cropSide, cropSide
+    );
+
+    return outCanvas.convertToBlob({ type: 'image/png' });
   }
 }
 
