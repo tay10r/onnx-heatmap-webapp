@@ -255,21 +255,11 @@ class ModelManager {
     const imgData = ctx.createImageData(w, h);
     const arr = imgData.data;
 
-    let min = Infinity;
-    let max = -Infinity;
     for (let i = 0; i < data.length; i++) {
-      const v = data[i];
-      if (v < min) min = v;
-      if (v > max) max = v;
-    }
-    const range = max - min || 1;
-
-    for (let i = 0; i < data.length; i++) {
-      const norm = (data[i] - min) / range;
-      const v = Math.max(0, Math.min(1, norm));
-      const r = v * 255;
-      const g = 0;
-      const b = (1 - v) * 255;
+      const x = data[i];
+      const v = x >= 0 ? 1 / (1 + Math.exp(-x)) : Math.exp(x) / (1 + Math.exp(x));
+      const idx = Math.floor(v * (MAGMA_LUT.length - 1));
+      const [r, g, b] = MAGMA_LUT[idx]
 
       const k = i * 4;
       arr[k] = r;
